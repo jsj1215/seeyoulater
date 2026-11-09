@@ -1,0 +1,27 @@
+# 테스트 전용 설정. PostgreSQL 없이 H2(PostgreSQL 호환 모드)로 실행하며 스키마는 엔티티로 생성함
+spring:
+  datasource:
+    url: jdbc:h2:mem:seeyoulater;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false
+
+jwt:
+  # 테스트 전용 키 (Base64, 384bit). 운영 키와 무관
+  secret: dGVzdC1vbmx5LWp3dC1zZWNyZXQta2V5LWZvci1zZWV5b3VsYXRlci11bml0LXRlc3Rz
+  expiration: 3600000
+
+app:
+  max-users: 1000
+  cookie:
+    secure: true
+  cors:
+    allowed-origins: http://localhost:5173
+  rate-limit:
+    login-per-minute: 10
+    signup-per-minute: 5
+    og-per-minute: 30
