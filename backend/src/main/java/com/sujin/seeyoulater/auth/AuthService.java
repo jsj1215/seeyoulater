@@ -21,10 +21,12 @@ public class AuthService {
     private static final int BCRYPT_MAX_BYTES = 72;
     private static final String EMAIL_UNAVAILABLE = "This email cannot be used for signup";
     private static final String INVALID_CREDENTIALS = "Invalid credentials";
+    private static final String TOO_MANY_FAILURES = "Too many failed login attempts. Please try again later.";
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider tokenProvider;
+    private final LoginAttemptLimiter loginAttemptLimiter;
     private final int maxUsers;
     // 존재하지 않는 이메일로 로그인해도 BCrypt 비교 1회를 수행해 응답 시간으로 가입 여부를 추측하지 못하게 함
     private final String dummyHash;
@@ -32,10 +34,12 @@ public class AuthService {
     public AuthService(UserRepository userRepository,
                        PasswordEncoder passwordEncoder,
                        JwtTokenProvider tokenProvider,
+                       LoginAttemptLimiter loginAttemptLimiter,
                        @Value("${app.max-users}") int maxUsers) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.tokenProvider = tokenProvider;
+        this.loginAttemptLimiter = loginAttemptLimiter;
         this.maxUsers = maxUsers;
         this.dummyHash = passwordEncoder.encode("timing-equalizer-dummy-password");
     }
@@ -64,15 +68,22 @@ public class AuthService {
 
     @Transactional(readOnly = true)
     public String login(LoginRequest request) {
+        // 계정 단위 잠금은 비밀번호 검증보다 먼저 확인해, 잠긴 동안에는 정답이어도 통과시키지 않음
+        if (loginAttemptLimiter.isLocked(request.email())) {
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, TOO_MANY_FAILURES);
+        }
         if (exceedsBcryptLimit(request.password())) {
+            loginAttemptLimiter.recordFailure(request.email());
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, INVALID_CREDENTIALS);
         }
         Optional<User> user = userRepository.findByEmail(request.email());
         String hash = user.map(User::getPassword).orElse(dummyHash);
         boolean matches = passwordEncoder.matches(request.password(), hash);
         if (user.isEmpty() || !matches) {
+            loginAttemptLimiter.recordFailure(request.email());
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, INVALID_CREDENTIALS);
         }
+        loginAttemptLimiter.recordSuccess(request.email());
         return tokenProvider.generateToken(user.get().getEmail());
     }
 

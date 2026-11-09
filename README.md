@@ -2,6 +2,8 @@
 
 나중에 볼 링크를 폴더와 태그로 정리하고, 저장한 날짜와 추천해 준 사람으로 다시 찾아보는 레트로 Mac 스타일 북마크 매니저입니다. (Spring Boot + React PWA + PostgreSQL)
 
+**[🔖 바로 써보기 → seeyoulater-b7fe4.web.app](https://seeyoulater-b7fe4.web.app/)** (Firebase Hosting + Cloud Run + Supabase)
+
 [🔗 소개 페이지 열기](https://html-preview.github.io/?url=https://github.com/jsj1215/seeyoulater/blob/main/docs/intro.html) · [docs/intro.html](docs/intro.html)
 
 > GitHub Pages를 켜면 `https://jsj1215.github.io/seeyoulater/docs/intro.html` 에서도 볼 수 있습니다.
@@ -104,6 +106,52 @@ npm run dev
 | `npm run lint` | ESLint |
 | `npm run preview` | 빌드 결과 미리보기 |
 
+## 배포
+
+데모는 화면, API 서버, DB를 각각 맞는 서비스에 올렸습니다.
+
+```mermaid
+flowchart LR
+    U["브라우저"] --> H["Firebase Hosting<br/>seeyoulater-b7fe4.web.app<br/>React 빌드(frontend/dist)"]
+    H -- "/api/** rewrite" --> R["Cloud Run (asia-southeast1)<br/>seeyoulater-api<br/>Spring Boot 컨테이너"]
+    R -- "JDBC + SSL<br/>Session pooler" --> S[("Supabase PostgreSQL<br/>ap-southeast-1")]
+    R -. "DB_PASSWORD, JWT_SECRET" .-> M["Secret Manager"]
+```
+
+- **같은 도메인으로 묶기**: Firebase Hosting이 `/api/**` 요청을 Cloud Run으로 넘깁니다(`firebase.json`). 화면과 API가 같은 출처라 CORS 없이 쿠키 인증이 동작합니다.
+- **쿠키 이름 `__session`**: Firebase Hosting은 Cloud Run으로 요청을 넘길 때 `__session` 쿠키만 전달하고 나머지 쿠키는 지웁니다. 그래서 인증 쿠키 이름을 이것으로 정했습니다(`auth/AuthCookie.java`).
+- **리전**: Supabase DB가 싱가포르에 있어서 Cloud Run도 싱가포르(`asia-southeast1`)에 두었습니다. 서버와 DB 사이 왕복이 쿼리마다 생기기 때문에, 사용자와 서버 사이 거리보다 서버와 DB 사이 거리가 응답 시간에 더 크게 영향을 줍니다.
+- **Supabase 접속**: 기본 Direct connection은 IPv6 전용이라 IPv4로 접속하는 Cloud Run에서는 **Session pooler** 주소를 씁니다. 무료 플랜의 동시 접속 수를 고려해 커넥션 풀을 5개로 줄였습니다(`SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE=5`).
+- **시크릿**: DB 비밀번호와 JWT 키는 Secret Manager에 두고, Cloud Run 전용 서비스 계정(`seeyoulater-api@…`)에는 이 두 시크릿의 읽기 권한만 줬습니다.
+- **인스턴스**: 요청이 없으면 0대로 줄어들어 비용이 거의 들지 않고, 대신 첫 요청은 서버 기동 시간(약 10초)이 더해집니다. 요청 횟수 제한을 서버 메모리에 기록하므로 최대 1대로 고정했습니다.
+- **클라이언트 IP**: 요청 횟수 제한은 `X-Forwarded-For`를 오른쪽부터 신뢰하는 프록시 수만큼 건너뛰어 사용자 IP를 구합니다(`config/ClientIpResolver.java`). 배포 환경에서 실제 헤더를 확인한 결과 `사용자 IP, Firebase 프록시` 뒤에 Google 내부 주소로 연결돼서 `RATE_LIMIT_TRUSTED_PROXY_HOPS=2`로 설정했습니다. Firebase Hosting은 클라이언트가 보낸 `X-Forwarded-For` 값을 지우고 새로 채웁니다.
+
+### 다시 배포하기
+
+```bash
+# 백엔드: Cloud Build가 backend/Dockerfile로 이미지를 빌드해 배포. 기존 환경변수와 시크릿 설정은 그대로 유지됨
+gcloud run deploy seeyoulater-api --source backend --region asia-southeast1 --project seeyoulater-b7fe4
+
+# 프론트엔드
+cd frontend && npm run build && cd ..
+firebase deploy --only hosting --project seeyoulater-b7fe4
+```
+
+처음 배포할 때 Cloud Run에 넣은 설정은 다음과 같습니다. 값이 비밀인 항목은 Secret Manager 참조로 넣었습니다.
+
+| 환경변수 | 값 |
+| --- | --- |
+| `DB_URL` | `jdbc:postgresql://<Supabase Session pooler 호스트>:5432/postgres?sslmode=require` |
+| `DB_USERNAME` | `postgres.<Supabase 프로젝트 ref>` |
+| `DB_PASSWORD` | Secret Manager `seeyoulater-db-password` |
+| `JWT_SECRET` | Secret Manager `seeyoulater-jwt-secret` (`openssl rand -base64 48`) |
+| `CORS_ALLOWED_ORIGINS` | `https://seeyoulater-b7fe4.web.app` |
+| `COOKIE_SECURE` | `true` |
+| `RATE_LIMIT_TRUSTED_PROXY_HOPS` | `2` |
+| `SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE` | `5` |
+
+DB 스키마는 Supabase SQL Editor에서 `init.sql`을 실행해 만들었습니다. 서버는 `ddl-auto: validate`로 시작할 때 엔티티와 테이블 구조가 맞는지 검사합니다.
+
 ## 기술 설계
 
 ### 아키텍처
@@ -117,7 +165,7 @@ flowchart LR
     end
 
     subgraph Server["backend/ (Spring Boot 3.5, Java 17)"]
-        Filter["CORS → RateLimitFilter → JwtAuthFilter<br/>(accessToken 쿠키)"] --> Ctrl["Controllers<br/>auth / bookmarks / folders / tags / og / stats / public"]
+        Filter["CORS → RateLimitFilter → JwtAuthFilter<br/>(__session 쿠키)"] --> Ctrl["Controllers<br/>auth / bookmarks / folders / tags / og / stats / public"]
         Ctrl --> Svc["Services<br/>소유권 검사, 태그 get-or-create, 포크"]
         Svc --> Repo["Spring Data JPA<br/>+ BookmarkSpec"]
         Ctrl --> Og["OgFetchService<br/>HttpClient 5 + IP 고정 DnsResolver<br/>jsoup은 파싱만"]
@@ -141,7 +189,7 @@ sequenceDiagram
     alt 로그인 안 됨
         FE->>FE: sessionStorage에 url/title 보관
         FE->>BE: POST /api/auth/login
-        BE-->>FE: Set-Cookie accessToken (httpOnly, Secure, SameSite=Lax)
+        BE-->>FE: Set-Cookie __session (httpOnly, Secure, SameSite=Lax)
     end
     FE->>FE: /add 화면에서 url 복원
     FE->>BE: GET /api/og?url=... (입력 후 500ms 디바운스)
@@ -206,7 +254,7 @@ erDiagram
 
 **1. JWT를 httpOnly 쿠키로 전달**
 
-- 결정: 로그인/가입 응답에서 `accessToken` 쿠키(httpOnly, Secure, SameSite=Lax, Max-Age 7일)를 내려주고, `JwtAuthFilter`가 쿠키에서 토큰을 꺼내 검증합니다. 세션은 STATELESS이고, 인증 없이 보호된 API를 부르면 401을 돌려줍니다.
+- 결정: 로그인/가입 응답에서 `__session` 쿠키(httpOnly, Secure, SameSite=Lax, Max-Age 7일)를 내려주고, `JwtAuthFilter`가 쿠키에서 토큰을 꺼내 검증합니다. 세션은 STATELESS이고, 인증 없이 보호된 API를 부르면 401을 돌려줍니다.
 - 이유: 프론트엔드 코드가 토큰을 읽거나 저장하지 않으므로 XSS로 토큰이 새어 나갈 경로가 줄어듭니다. 새로고침하면 `GET /api/auth/me`로 로그인 상태를 복원하고, 사용 중에 401을 받으면 axios 인터셉터가 로그아웃 상태로 바꿔 `/login`으로 보냅니다.
 - 대안과 트레이드오프: `localStorage` + `Authorization` 헤더 방식은 구현이 단순하지만 스크립트에서 토큰에 접근할 수 있습니다. 현재 구조에는 리프레시 토큰과 서버 측 토큰 폐기가 없어 로그아웃은 쿠키 삭제뿐이고, CSRF 토큰은 끈 채 SameSite=Lax에 기대고 있습니다. `/api/auth/logout`은 토큰이 만료되거나 깨져 있어도 쿠키를 지울 수 있게 인증 없이 열어 두었습니다.
 - 근거: `backend/.../config/JwtAuthFilter.java`, `config/SecurityConfig.java`, `auth/AuthController.java`, `frontend/src/api/client.ts`, `frontend/src/store/authStore.ts`
@@ -322,7 +370,7 @@ seeyoulater/
 
 ## 테스트
 
-백엔드 테스트는 69개입니다. PostgreSQL 없이 H2를 PostgreSQL 호환 모드로 띄워 실행하므로 Docker를 켜지 않아도 됩니다.
+백엔드 테스트는 75개입니다. PostgreSQL 없이 H2를 PostgreSQL 호환 모드로 띄워 실행하므로 Docker를 켜지 않아도 됩니다.
 
 ```bash
 cd backend
@@ -331,7 +379,8 @@ cd backend
 
 | 테스트 클래스 | 개수 | 다루는 내용 |
 | --- | --- | --- |
-| `AuthApiTest` | 10 | 미인증 401, 깨진 토큰 401, CORS preflight, 쿠키 속성(httpOnly, Secure), 72바이트 비밀번호 제한, 중복 가입 409, 로그인 11번째 요청 429, 토큰이 깨져도 로그아웃 가능 |
+| `AuthApiTest` | 12 | 미인증 401, 깨진 토큰 401, CORS preflight, 쿠키 속성(httpOnly, Secure), 72바이트 비밀번호 제한, 중복 가입 409, IP 기준 로그인 11번째 요청 429, 계정 기준 5회 실패 잠금(IP를 바꿔도 적용), 로그인 성공 시 실패 횟수 초기화, 토큰이 깨져도 로그아웃 가능 |
+| `ClientIpResolverTest` | 4 | 신뢰 프록시 수에 따른 클라이언트 IP 선택, 위조된 `X-Forwarded-For` 앞부분 무시, 헤더가 짧을 때 처리 |
 | `ResourceApiTest` | 12 | 남의 북마크 404, 기본 정렬 최신순, 태그 필터(`tagIds` 반복 파라미터), 페이지 크기 상한, URL 수정 반영, http(s) 외 URL과 길이 초과 거부, LIKE 와일드카드 이스케이프, 잘못된 월 400, 폴더/태그 순서 저장, 공개 API 응답 필드, 포크 규칙 |
 | `OgFetchServiceTest` | 47 | 차단/허용 IP 목록(파라미터 테스트 39건), 상대 경로 og:image 처리, 리다이렉트 홉별 재검증과 최대 횟수, HTML이 아닌 응답 무시, 연결 시점 DNS 재검증 |
 
@@ -356,14 +405,16 @@ npm run build   # tsc -b 타입 체크 + 빌드
 - 로그인 실패는 이메일 존재 여부와 관계없이 같은 401 메시지를 반환하고, 없는 이메일이어도 더미 해시와 BCrypt 비교를 한 번 해서 응답 시간 차이로 가입 여부를 추측하기 어렵게 했습니다. 중복 가입은 이메일을 되풀이하지 않는 일반 메시지와 함께 409입니다.
 - 북마크, 폴더, 태그는 모두 `findByIdAndUserId`로 조회해 남의 리소스는 404로 응답합니다.
 - 입력 검증: URL과 썸네일 URL은 http(s)만, 각각 2048자 이하. 제목 500자, 메모 10000자, 북마크당 태그 30개, 태그명 100자(북마크 저장 시 넘기는 `tagNames`에도 같은 제한), 폴더명 200자.
-- 로그인 분당 10회, 가입 분당 5회, `/api/og` 분당 30회를 IP별로 제한합니다(`RateLimitFilter`, 인메모리).
+- 로그인 분당 10회, 가입 분당 5회, `/api/og` 분당 30회를 IP별로 제한합니다(`RateLimitFilter`, 인메모리). 프록시 뒤에서는 `ClientIpResolver`가 신뢰하는 프록시가 덧붙인 값만 사용자 IP로 씁니다.
+- 로그인은 계정 단위로도 제한합니다. 같은 이메일로 15분 안에 5번 실패하면 15분 동안 잠기고, 잠긴 동안에는 비밀번호가 맞아도 429를 돌려줍니다(`auth/LoginAttemptLimiter.java`). Cloud Run 주소로 직접 요청하면서 `X-Forwarded-For`를 바꿔 IP 기준 제한을 피하더라도, 한 계정에 비밀번호를 계속 대입할 수는 없습니다. 없는 이메일에도 같은 규칙을 적용해 응답으로 가입 여부를 알 수 없게 했습니다.
 - 프론트엔드는 외부 썸네일과 파비콘을 `referrerPolicy="no-referrer"`로 불러오고, 파비콘은 제3자 서비스 대신 각 사이트의 `/favicon.ico`를 직접 요청합니다. `npm audit --omit=dev` 기준 운영 의존성 취약점은 0건입니다.
 - 가입 인원은 `app.max-users`(현재 `application.yml` 값 1000)로 제한합니다.
 - `application-local.yml`은 gitignore 대상이라 저장소에 없습니다. `--spring.profiles.active=local`로 로컬 전용 설정을 덮어쓸 때만 직접 만들어 쓰면 됩니다.
 
 ## 알려진 한계
 
-- **rate limit은 단일 인스턴스 전제**: 버킷을 서버 메모리(`ConcurrentHashMap`)에 두므로 인스턴스를 여러 대로 늘리면 인스턴스마다 따로 셉니다. 리버스 프록시 뒤에 두면 모든 요청이 프록시 IP로 보이므로 `server.forward-headers-strategy` 설정이 필요합니다.
+- **rate limit은 단일 인스턴스 전제**: 버킷과 로그인 실패 기록을 서버 메모리에 두므로 인스턴스를 여러 대로 늘리면 인스턴스마다 따로 세고, 서버가 재시작되면 초기화됩니다. 데모는 Cloud Run 최대 인스턴스를 1로 고정했습니다.
+- **Cloud Run 주소 직접 호출**: Firebase Hosting이 Cloud Run을 호출하려면 서비스가 공개돼 있어야 해서 `…run.app` 주소로 직접 요청할 수 있습니다. 이 경로에서는 `X-Forwarded-For`를 위조해 가입과 `/api/og`의 IP 기준 제한을 피할 수 있습니다. 로그인은 계정 기준 잠금이 따로 있어 영향이 작습니다.
 - **토큰 폐기 없음**: JWT 유효기간은 7일이고 서버 측 폐기 목록이나 리프레시 토큰이 없습니다. 쿠키를 지워도 이미 탈취된 토큰은 만료 전까지 유효합니다.
 - **마스킹된 소유자 이름**: 공개 API의 `ownerName`은 이메일 로컬파트 앞 2자(2자 이하면 1자)를 그대로 보여 줍니다.
 - **공개 폴더 목록**: `/api/public/folders`는 페이징 없이 전체를 돌려주고, 폴더마다 북마크 수를 세는 count 쿼리가 따로 나갑니다(N+1).

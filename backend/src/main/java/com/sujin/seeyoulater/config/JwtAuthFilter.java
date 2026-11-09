@@ -1,5 +1,7 @@
 package com.sujin.seeyoulater.config;
 
+import com.sujin.seeyoulater.auth.AuthCookie;
+
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
@@ -47,7 +49,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private String extractTokenFromCookie(HttpServletRequest request) {
         if (request.getCookies() == null) return null;
         return Arrays.stream(request.getCookies())
-                .filter(c -> "accessToken".equals(c.getName()))
+                .filter(c -> AuthCookie.NAME.equals(c.getName()))
                 .map(Cookie::getValue)
                 .findFirst()
                 .orElse(null);

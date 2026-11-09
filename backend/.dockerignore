@@ -1,0 +1,13 @@
+# 빌드 산출물과 로컬 전용 파일은 이미지 빌드 컨텍스트에서 제외
+build/
+bin/
+out/
+.gradle/
+.idea/
+*.iml
+*.log
+
+# 시크릿은 이미지에 넣지 않고 Cloud Run 환경변수/Secret Manager로 주입
+.env
+.env.*
+!.env.example
