@@ -32,6 +32,12 @@ app:
     login-per-minute: 10
     signup-per-minute: 5
     og-per-minute: 30
+    # 같은 이메일로 login-lock-minutes 안에 이만큼 실패하면 그 시간 동안 잠금 (IP를 바꿔가며 대입하는 공격 대응)
+    login-failures-per-email: 5
+    login-lock-minutes: 15
+    # 프록시 뒤에서 X-Forwarded-For 오른쪽부터 신뢰할 프록시 수. 로컬은 0, Cloud Run 배포 시 실제 헤더 확인 후 설정
+    trusted-proxy-hops: ${RATE_LIMIT_TRUSTED_PROXY_HOPS:0}
 
 server:
-  port: 8080
+  # Cloud Run은 PORT 환경변수로 포트를 지정함
+  port: ${PORT:8080}

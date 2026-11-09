@@ -266,7 +266,8 @@
       <h1>save it.<br><span class="hl">see it later.</span></h1>
       <p class="sub"><span class="cmt">// </span>흩어진 링크를 폴더와 태그로 정리하고, 저장한 날짜로 되짚어 보고, 남이 만든 폴더를 가져오세요. 90년대 Mac OS 감성으로 만든 나만의 북마크 매니저.</p>
       <div class="cta">
-        <a class="btn btn-primary" href="https://github.com/jsj1215/seeyoulater" target="_blank" rel="noopener">GitHub 저장소 보기</a>
+        <a class="btn btn-primary" href="https://seeyoulater-b7fe4.web.app/" target="_blank" rel="noopener">바로 써보기</a>
+        <a class="btn" href="https://github.com/jsj1215/seeyoulater" target="_blank" rel="noopener">GitHub 저장소 보기</a>
         <a class="btn" href="#design">설계 살펴보기</a>
       </div>
     </div>
@@ -611,7 +612,7 @@
           <div class="node fe"><h4>PWA (vite-plugin-pwa)</h4><div class="sm">share_target → /share · 정적 자산만 precache, /api는 캐시 안 함</div></div>
         </div>
       </div>
-      <div class="arrow">HTTP JSON + accessToken 쿠키 (Vite proxy /api → :8080)</div>
+      <div class="arrow">HTTP JSON + __session 쿠키 (배포: Firebase Hosting /api → Cloud Run, 로컬: Vite proxy → :8080)</div>
       <div class="layer">
         <div class="lbl">server · backend/ (Spring Boot 3.5, Java 17)</div>
         <div class="arch-row">
@@ -647,7 +648,7 @@
       <div class="dec bevel reveal">
         <h3>🔐 JWT를 httpOnly 쿠키에 담기</h3>
         <dl>
-          <dt>결정</dt><dd>로그인/가입 시 <code>accessToken</code> 쿠키(httpOnly, Secure, SameSite=Lax, 7일)로 내려주고, 필터가 쿠키에서 토큰을 꺼내 검증합니다. 인증이 없으면 401로 응답하고, 프론트는 401을 받으면 로그아웃 상태로 바꿔 로그인 화면으로 보냅니다.</dd>
+          <dt>결정</dt><dd>로그인/가입 시 <code>__session</code> 쿠키(httpOnly, Secure, SameSite=Lax, 7일)로 내려주고, 필터가 쿠키에서 토큰을 꺼내 검증합니다. 인증이 없으면 401로 응답하고, 프론트는 401을 받으면 로그아웃 상태로 바꿔 로그인 화면으로 보냅니다.</dd>
           <dt>이유</dt><dd>프론트엔드 JS가 토큰을 아예 만지지 않아 XSS로 토큰이 유출될 경로가 줄어듭니다. 새로고침 시에는 <code>/api/auth/me</code> 호출로 로그인 상태를 복원합니다.</dd>
           <dt class="t">트레이드오프</dt><dd>리프레시 토큰과 서버 측 토큰 폐기가 없어 로그아웃은 쿠키 삭제뿐입니다. CSRF 토큰은 끄고 SameSite=Lax에 기대고 있습니다. Safari는 <code>http://localhost</code>에서 Secure 쿠키를 저장하지 않아, 로컬에서 Safari로 개발할 때만 <code>COOKIE_SECURE=false</code>로 띄워야 합니다.</dd>
         </dl>
@@ -767,7 +768,8 @@
             <li><b>쿠키</b>는 httpOnly, Secure, SameSite=Lax입니다. 인증이 없으면 401로 응답합니다.</li>
             <li><b>입력 검증</b>: URL과 썸네일은 http(s)만 2048자까지, 메모 10000자, 북마크당 태그 30개, 태그명 100자(북마크 저장 시 태그 이름에도 적용), 폴더명 200자, 페이지 크기 100.</li>
             <li><b>SSRF 방어</b>: 검증한 IP로만 연결(DNS 재바인딩 방지), 리다이렉트마다 재검증, 80/443 포트만, 내부망과 특수 대역 차단, text/html만 파싱, 2MB와 10초 제한.</li>
-            <li><b>Rate limit</b>: 로그인 분당 10회, 가입 분당 5회, OG 조회 분당 30회(IP별). 넘으면 429와 Retry-After.</li>
+            <li><b>Rate limit</b>: 로그인 분당 10회, 가입 분당 5회, OG 조회 분당 30회(IP별). 넘으면 429와 Retry-After. 프록시 뒤에서는 신뢰하는 프록시가 덧붙인 <code>X-Forwarded-For</code> 값만 사용자 IP로 씁니다.</li>
+            <li><b>계정 잠금</b>: 같은 이메일로 15분 안에 5번 실패하면 15분 동안 잠겨서, IP를 바꿔가며 비밀번호를 대입해도 막힙니다.</li>
             <li><b>공개 API</b>는 이메일 대신 마스킹한 이름만, 북마크는 url, 제목, 썸네일, 저장일만 내보냅니다. 포크도 같은 범위만 복사합니다.</li>
             <li><b>시크릿 분리</b>: JWT 키와 DB 접속 정보는 환경변수로 받습니다. <code>JWT_SECRET</code>은 기본값이 없어 설정하지 않으면 서버가 뜨지 않습니다. 로컬에서는 gitignore된 <code>backend/.env</code>를 Spring이 자동으로 읽습니다. DB 포트는 127.0.0.1에만 열립니다.</li>
             <li><b>CORS</b>는 <code>CORS_ALLOWED_ORIGINS</code>(기본 <code>http://localhost:5173</code>)에 적힌 출처만 credentials와 함께 허용하고, 보안 필터 체인 맨 앞에서 처리합니다.</li>
@@ -779,7 +781,7 @@
         <div class="titlebar coral"><div class="lights"><span class="r"></span><span class="y"></span><span class="g"></span></div><div class="ttl l">todo.log</div></div>
         <div class="winbody">
           <ul class="sec-list warn">
-            <li>Rate limit은 서버 메모리에 있어 인스턴스 한 대일 때만 정확합니다. 프록시 뒤에 두려면 forward-headers 설정이 필요합니다.</li>
+            <li>Rate limit과 로그인 실패 기록은 서버 메모리에 있어 인스턴스 한 대일 때만 정확합니다(데모는 Cloud Run 최대 1대).</li>
             <li>토큰 폐기 목록이 없어 발급된 JWT는 7일 동안 유효합니다.</li>
             <li>마스킹된 이름에도 이메일 로컬파트 앞 2자가 보입니다.</li>
             <li>공개 폴더 목록은 페이징이 없고, 폴더마다 count 쿼리가 따로 나갑니다(N+1).</li>
@@ -819,7 +821,7 @@
 <span class="c"># 백엔드 테스트 (H2, JDK 17 또는 21)</span>
 <span class="p">$</span> cd backend &amp;&amp; ./gradlew test</div>
     </div>
-    <p class="reveal" style="font-size:13px;color:var(--ink2);margin-top:16px">테스트: 백엔드 테스트 69개(AuthApiTest 10, ResourceApiTest 12, OgFetchServiceTest 47)가 H2의 PostgreSQL 호환 모드에서 돌아서 Docker 없이 실행됩니다. Gradle 8.7 wrapper는 JDK 24에서 동작하지 않으니 JDK 17이나 21로 실행하세요. 프론트엔드는 <code style="background:var(--inset);padding:0 4px">npm run lint</code>와 타입 체크를 포함한 <code style="background:var(--inset);padding:0 4px">npm run build</code>로 검증합니다.</p>
+    <p class="reveal" style="font-size:13px;color:var(--ink2);margin-top:16px">테스트: 백엔드 테스트 75개(AuthApiTest 12, ResourceApiTest 12, OgFetchServiceTest 47, ClientIpResolverTest 4)가 H2의 PostgreSQL 호환 모드에서 돌아서 Docker 없이 실행됩니다. Gradle 8.7 wrapper는 JDK 24에서 동작하지 않으니 JDK 17이나 21로 실행하세요. 프론트엔드는 <code style="background:var(--inset);padding:0 4px">npm run lint</code>와 타입 체크를 포함한 <code style="background:var(--inset);padding:0 4px">npm run build</code>로 검증합니다.</p>
   </div>
 </section>
 

@@ -1,8 +1,11 @@
 package com.sujin.seeyoulater;
 
+import com.sujin.seeyoulater.auth.AuthCookie;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sujin.seeyoulater.config.JwtTokenProvider;
+import com.sujin.seeyoulater.auth.LoginAttemptLimiter;
 import com.sujin.seeyoulater.config.RateLimitFilter;
 import com.sujin.seeyoulater.user.User;
 import com.sujin.seeyoulater.user.UserRepository;
@@ -32,10 +35,12 @@ public abstract class ApiTestSupport {
     @Autowired protected PasswordEncoder passwordEncoder;
     @Autowired protected JwtTokenProvider tokenProvider;
     @Autowired protected RateLimitFilter rateLimitFilter;
+    @Autowired protected LoginAttemptLimiter loginAttemptLimiter;
 
     @BeforeEach
     void resetRateLimit() {
         rateLimitFilter.reset();
+        loginAttemptLimiter.reset();
     }
 
     protected static String uniqueEmail(String prefix) {
@@ -47,7 +52,7 @@ public abstract class ApiTestSupport {
         if (userRepository.findByEmail(email).isEmpty()) {
             userRepository.save(new User(email, passwordEncoder.encode("password1234")));
         }
-        return new Cookie("accessToken", tokenProvider.generateToken(email));
+        return new Cookie(AuthCookie.NAME, tokenProvider.generateToken(email));
     }
 
     protected String json(Object body) throws Exception {

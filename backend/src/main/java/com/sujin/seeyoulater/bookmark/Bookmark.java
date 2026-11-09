@@ -4,6 +4,8 @@ import com.sujin.seeyoulater.folder.Folder;
 import com.sujin.seeyoulater.tag.Tag;
 import com.sujin.seeyoulater.user.User;
 import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
 import java.util.HashSet;
@@ -37,6 +39,8 @@ public class Bookmark {
     @Column(columnDefinition = "TEXT")
     private String memo;
 
+    // init.sql은 0~5 별점을 SMALLINT로 저장함. ddl-auto: validate가 통과하도록 JDBC 타입을 맞춤
+    @JdbcTypeCode(SqlTypes.SMALLINT)
     @Column(nullable = false)
     private int rating = 0;
 

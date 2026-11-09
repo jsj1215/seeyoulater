@@ -1,5 +1,7 @@
 package com.sujin.seeyoulater;
 
+import com.sujin.seeyoulater.auth.AuthCookie;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -39,7 +41,7 @@ class AuthApiTest extends ApiTestSupport {
 
     @Test
     void invalidTokenReturns401() throws Exception {
-        mockMvc.perform(get("/api/folders").cookie(new Cookie("accessToken", "not-a-jwt")))
+        mockMvc.perform(get("/api/folders").cookie(new Cookie(AuthCookie.NAME, "not-a-jwt")))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -83,16 +85,56 @@ class AuthApiTest extends ApiTestSupport {
 
     @Test
     void eleventhLoginWithinAMinuteReturns429() throws Exception {
-        String body = json(Map.of("email", uniqueEmail("rl"), "password", "wrong-password"));
+        // 이메일 기준 잠금(5회)과 구분하려고 시도마다 다른 이메일을 씀 → IP 기준 제한만 검증
         for (int i = 0; i < 10; i++) {
+            String body = json(Map.of("email", uniqueEmail("rl" + i), "password", "wrong-password"));
             mockMvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON).content(body))
                     .andExpect(status().isUnauthorized());
         }
+        String body = json(Map.of("email", uniqueEmail("rl-last"), "password", "wrong-password"));
         mockMvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(header().exists("Retry-After"))
                 .andExpect(jsonPath("$.message").isString())
                 .andExpect(jsonPath("$.status").value(429));
+    }
+
+    @Test
+    void accountLocksAfterFiveFailuresEvenWithSpoofedIps() throws Exception {
+        // Cloud Run 주소로 직접 요청하며 X-Forwarded-For를 바꿔도 같은 계정은 잠김
+        String email = uniqueEmail("lock");
+        loginAs(email);
+        String wrong = json(Map.of("email", email, "password", "wrong-password"));
+        for (int i = 0; i < 5; i++) {
+            String spoofedIp = "203.0.113." + (i + 1);
+            mockMvc.perform(post("/api/auth/login").with(r -> { r.setRemoteAddr(spoofedIp); return r; })
+                            .contentType(MediaType.APPLICATION_JSON).content(wrong))
+                    .andExpect(status().isUnauthorized());
+        }
+        String correct = json(Map.of("email", email, "password", "password1234"));
+        mockMvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON).content(correct))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.status").value(429));
+    }
+
+    @Test
+    void successfulLoginClearsFailureCount() throws Exception {
+        String email = uniqueEmail("clear");
+        loginAs(email);
+        String wrong = json(Map.of("email", email, "password", "wrong-password"));
+        String correct = json(Map.of("email", email, "password", "password1234"));
+        for (int i = 0; i < 4; i++) {
+            mockMvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON).content(wrong))
+                    .andExpect(status().isUnauthorized());
+        }
+        mockMvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON).content(correct))
+                .andExpect(status().isOk());
+        for (int i = 0; i < 4; i++) {
+            mockMvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON).content(wrong))
+                    .andExpect(status().isUnauthorized());
+        }
+        mockMvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON).content(correct))
+                .andExpect(status().isOk());
     }
 
     @Test
@@ -102,12 +144,12 @@ class AuthApiTest extends ApiTestSupport {
         mockMvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
                         .content(json(Map.of("email", email, "password", "password1234"))))
                 .andExpect(status().isOk())
-                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("accessToken=")));
+                .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString(AuthCookie.NAME + "=")));
     }
 
     @Test
     void logoutClearsCookieEvenWithInvalidToken() throws Exception {
-        mockMvc.perform(post("/api/auth/logout").cookie(new Cookie("accessToken", "expired-or-garbage")))
+        mockMvc.perform(post("/api/auth/logout").cookie(new Cookie(AuthCookie.NAME, "expired-or-garbage")))
                 .andExpect(status().isOk())
                 .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
                 .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Secure")))
