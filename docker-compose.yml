@@ -1,0 +1,24 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: seeyoulater-db
+    environment:
+      POSTGRES_DB: seeyoulater
+      POSTGRES_USER: seeyoulater
+      # 백엔드 DB_PASSWORD 기본값(seeyoulater)과 맞춤. 바꾸면 백엔드 DB_PASSWORD도 같이 바꿀 것
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-seeyoulater}
+    ports:
+      # 외부 네트워크에 DB 포트를 열지 않도록 로컬 루프백에만 바인딩
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seeyoulater -d seeyoulater"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

@@ -1,0 +1,40 @@
+# Backend
+backend/build/
+backend/.gradle/
+backend/out/
+backend/*.class
+backend/.idea/
+backend/*.iml
+backend/bin/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Environment / Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.local.yml
+application-local.yml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Editor
+.vscode/
+.idea/
+
+# AI tooling (local session state)
+.omc/
+.claude/settings.local.json
+
+# AI 에이전트 지침 파일 (공개하지 않음)
+CLAUDE.md
